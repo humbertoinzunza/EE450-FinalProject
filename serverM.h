@@ -5,10 +5,21 @@
 class ServerM
 {
     private:
-        struct addrinfo hints;
-        struct addrinfo *servinfo;
+        struct addrinfo hintsS;
+        struct addrinfo *servinfoS;
+        struct addrinfo *pS;
+        int socketfdS;
+        struct addrinfo hintsD;
+        struct addrinfo *servinfoD;
+        struct addrinfo *pD;
+        int socketfdD;
+        struct addrinfo hintsU;
+        struct addrinfo *servinfoU;
+        struct addrinfo *pU;
+        int socketfdU;
     public:
         ServerM();
         ~ServerM();
-        void get_addrinfo();
+        void get_addrinfos();
+        void create_sockets(bool);
 };
