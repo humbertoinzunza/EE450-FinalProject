@@ -1,8 +1,7 @@
-#include "client.h"
+#include "backend_server.h"
 #include <fstream>
 #include <cstdio>
 #include <iostream>
-#include <string>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -11,36 +10,70 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 
-#define LOOPBACKIP "127.0.0.1"
-#define SERVERPORT "45599"
-
-Client::Client() {
-
+/*
+    Default constructor.
+*/
+BackendServer::BackendServer(const char *server_id, const char *my_udp_port, const char *my_data_fname) {
+    SERVER_ID = server_id;
+    MY_UDP_PORT = my_udp_port;
+    MY_DATA_FNAME = my_data_fname;
+    load_data();
+    get_addrinfos();
+    create_sockets();
+    printf("The Server %s is up and running using UDP on port %s.\n", SERVER_ID, MY_UDP_PORT);
+    send_initial_data();
+    printf("The Server %s has sent the room status to the main server.\n", SERVER_ID);
 }
 
-Client::~Client() {
-
+/*
+    Destructor
+*/
+BackendServer::~BackendServer() {
+    // Free the memory used by the linked lists and the socket file descriptors
+    freeaddrinfo(servinfo);
+    freeaddrinfo(servinfoM);    
+    close(socketfd);
+    close(socketfdM);
 }
 
-string Client::basic_encrypt(string msg) {
-    string cypher_text = msg;
-    for (unsigned int i = 0; i < msg.length(); i++) {
-        if (msg[i] >= 'a' && msg[i] <= 'z') 
-            cypher_text[i] = (msg[i] + 3 - 'a') % 26 + 'a';
-        else if (msg[i] >= 'A' && msg[i] <= 'Z') 
-            cypher_text[i] = (msg[i] + 3 - 'A') % 26 + 'A';
-        else if (msg[i] >= '0' && msg[i] <= '9') 
-            cypher_text[i] = (msg[i] + 3 - '0') % 10 + '0';
-        else
-            cypher_text[i] = msg[i];
+/*
+    Loads the data from the input file into the room_status map.
+*/
+void BackendServer::load_data() {
+    ifstream data_file;
+    data_file.open(MY_DATA_FNAME);
+    for (string line; getline(data_file, line);) {
+        string buffer = "";
+        short number;
+        short status;
+        bool room_number_found = false;
+        // Start at 1 to skip the first letter
+        for (uint i = 1; i < line.length(); i++) {
+            if (!room_number_found)
+            {
+                if (!isdigit(line[i])) {
+                    number = stoi(buffer);
+                    buffer = "";
+                    room_number_found = true;
+                }
+                else
+                    buffer += line[i];
+            }
+            else {
+                if (isdigit(line[i]))
+                    buffer += line[i];
+            }
+        }
+        status = stoi(buffer);
+        // Insert data point into map
+        room_status[number] = status;
     }
-    return cypher_text;
 }
 
 /*
     Sets up the structs needed for the sockets.
 */
-void Client::get_addrinfos() {
+void BackendServer::get_addrinfos() {
     int status;
 
     memset(&hints, 0, sizeof hints); // Set the struct to empty
@@ -64,7 +97,7 @@ void Client::get_addrinfos() {
     }
 }
 
-void Client::create_sockets() {
+void BackendServer::create_sockets() {
     // Loop through the linked list to get a valid socket to receive incoming UDP connections
     for (p = servinfo; p != NULL; p = p->ai_next) {
         if ((socketfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1)
@@ -97,9 +130,17 @@ void Client::create_sockets() {
     }
 }
 
-int main(int argc, char *argv[]) {
-    Client client;
-    string s;
-    getline(cin, s);
-    cout << client.basic_encrypt(s) << endl;
+void BackendServer::send_initial_data() {
+    // Put data to be sent into array so it's easier
+    int i = 0;
+    short data[room_status.size() * 2];
+    for (auto const& kvp : room_status) {
+        data[i] = kvp.first;
+        data[i + 1] = kvp.second;
+        i += 2;
+    }
+    int bytes_to_send = sizeof(short) * room_status.size() * 2;
+    int numbytes;
+    if ((numbytes = sendto(socketfd, data, bytes_to_send, 0, pM->ai_addr, pM->ai_addrlen)) == -1)
+        exit(3);
 }

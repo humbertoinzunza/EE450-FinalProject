@@ -1,14 +1,10 @@
-#include <map>
+#include "backend_server.h"
 
 using namespace std;
 
-class ServerS
+class ServerS : BackendServer
 {
-    private:
-        map<short, short> room_status;
-        const char* data_filename = "suite.txt";
-        void load_data();
     public:
-        ServerS();   
+        ServerS();
 };
 
