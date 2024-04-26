@@ -2,7 +2,7 @@
 
 using namespace std;
 
-class ServerS : BackendServer
+class ServerS : public BackendServer
 {
     public:
         ServerS();

@@ -13,8 +13,9 @@ class ServerM
         map<unsigned short, unsigned short> rooms_S;
         map<unsigned short, unsigned short> rooms_D;
         map<unsigned short, unsigned short> rooms_U;
+        uint16_t my_tcp_port;
+        uint16_t my_udp_port;
         struct addrinfo *servinfo_udp;
-        struct addrinfo *p_udp;
         int socketfd_udp;
         struct addrinfo *servinfoS;
         struct addrinfo *pS;
@@ -26,7 +27,6 @@ class ServerM
         struct addrinfo *pU;
         int socketfdU;
         struct addrinfo *servinfo_tcp;
-        struct addrinfo *p_tcp;
         int socketfd_tcp;
 
         void get_addrinfos();
@@ -41,11 +41,13 @@ class ServerM
         ServerM();
         ~ServerM();
         void print_room_data(char);
-        unsigned char *receive_udp(int *, uint16_t *);
-        unsigned char *receive_tcp(int, int *);
-        int accept_connection(uint16_t *); 
+        void receive_udp(unsigned char *, int *, uint16_t *);
+        void receive_tcp(unsigned char *, int *, int);
+        int accept_connection(); 
         void close_parent_socket();
         void close_child_socket(int);
-        bool authenticate(unsigned char *, int, unsigned char *);
-        void send_response_code(unsigned char);
+        bool authenticate(unsigned char *, int, unsigned char *, string *);
+        void send_response_code(int, unsigned char);
+        void process_query_request(unsigned char *, int, unsigned char *, string);
+        void process_reservation_request(unsigned char *, int, unsigned char *, string, bool);
 };

@@ -10,6 +10,9 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 
+
+#define MAXBUFLEN   8
+
 /*
     Default constructor.
 */
@@ -141,6 +144,97 @@ void BackendServer::send_initial_data() {
     }
     int bytes_to_send = sizeof(short) * room_status.size() * 2;
     int numbytes;
-    if ((numbytes = sendto(socketfd, data, bytes_to_send, 0, pM->ai_addr, pM->ai_addrlen)) == -1)
+    if ((numbytes = sendto(socketfd, data, bytes_to_send, 0, pM->ai_addr, pM->ai_addrlen)) == -1) {
+        perror("send");
         exit(3);
+    }
+}
+
+void BackendServer::receive_loop() {
+    int numbytes;
+    unsigned char buf[MAXBUFLEN];
+    unsigned char response_code;
+    while (1) {
+        receive_udp(buf, &numbytes);
+        if (buf[0] == 0) { // Query request
+            query(buf, &response_code);
+            send_response(response_code);
+            printf("The Server %s finished sending the response to the main server.\n", SERVER_ID);
+        }
+        else if (buf[0] == 1) { // Reservation request
+            reservation(buf, &response_code);
+            send_response(response_code);
+            if (response_code == 0)
+                printf("The Server %s finished sending the response and the updated room status to the main server.\n", SERVER_ID);
+            else
+                printf("The Server %s finished sending the response to the main server.\n", SERVER_ID);
+        }
+    }
+}
+
+void BackendServer::query(unsigned char *buffer, unsigned char *response_code) {
+    unsigned short room_number;
+    printf("The Server %s received an availability request from the main server.\n", SERVER_ID);
+    room_number = (((unsigned short)buffer[1]) << 8) | buffer[2];
+    cout << "Looking for room " << SERVER_ID << room_number << endl;
+    map<unsigned short, unsigned short>::iterator it = room_status.find(room_number);
+    if (it == room_status.end()) // Room not found
+    {
+        cout << "Not able to find the room layout." << endl;
+        (*response_code) = 2;
+        return;
+    }
+    else if (it->second == 0) // Room exists, but it's not available (= 0)
+    {
+        printf("Room %s%i is not available.\n", SERVER_ID, room_number);
+        (*response_code) = 1;
+        return;
+    }
+    printf("Room %s%i is available.\n", SERVER_ID, room_number);
+    (*response_code) = 0; // Room exists, and status is > 0
+}
+
+void BackendServer::reservation(unsigned char *buffer, unsigned char *response_code) {
+    unsigned short room_number;
+    printf("The Server %s received a reservation request from the main server.\n", SERVER_ID);
+    room_number = (((unsigned short)buffer[1]) << 8) | buffer[2];
+    map<unsigned short, unsigned short>::iterator it = room_status.find(room_number);
+    if (it == room_status.end()) // Room not found
+    {
+        cout << "Cannot make a reservation. Not able to find the room layout." << endl;
+        (*response_code) = 2;
+        return;
+    }
+    else if (it->second == 0) // Room exists, but it's not available (= 0)
+    {
+        printf("Cannot make a reservation. Room %s%i is not available.\n", SERVER_ID, room_number);
+        (*response_code) = 1;
+        return;
+    }
+    it->second--;
+    printf("Successful reservation. The count of Room %s%i is now %i.\n", SERVER_ID, room_number, it->second);
+    // Response code and two bytes of unsigned short room count
+    (*response_code) = 0;
+}
+
+void BackendServer::send_response(unsigned char response_code) {
+    int sent_bytes;
+    if ((sent_bytes = sendto(socketfd, &response_code, 1, 0, pM->ai_addr, pM->ai_addrlen)) == -1) {
+        perror("send");
+        exit(4);
+    }
+}
+
+/*
+    Receives data from the main server
+*/
+void BackendServer::receive_udp(unsigned char *buf, int *numbytes) {
+    struct sockaddr from_addr;
+    memset(&from_addr, 0, sizeof from_addr);
+    socklen_t from_len = sizeof from_addr;
+    // Receive data from the given server
+    if (((*numbytes) = recvfrom(socketfd, buf, MAXBUFLEN - 1, 0, &from_addr, &from_len)) == -1) {
+        perror("receive_from");
+        exit(3);
+    }
 }

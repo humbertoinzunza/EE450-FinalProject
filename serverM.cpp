@@ -11,8 +11,6 @@
 #include <sys/wait.h>
 #include <signal.h>
 
-#include <bitset>
-
 #define BACKLOG 10
 #define LOOPBACKIP      "127.0.0.1"
 #define SERVERSPORT     "41599"
@@ -104,14 +102,15 @@ void ServerM::get_addrinfos() {
 }
 
 void ServerM::create_sockets() {
+    struct addrinfo *p;
     // Loop through the linked list to get a valid socket to receive incoming UDP connections
-    for (p_udp = servinfo_udp; p_udp != NULL; p_udp = p_udp->ai_next) {
-        if ((socketfd_udp = socket(p_udp->ai_family, p_udp->ai_socktype, p_udp->ai_protocol)) == -1) {
+    for (p = servinfo_udp; p != NULL; p = p->ai_next) {
+        if ((socketfd_udp = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
             perror("listener: socket");
             continue; // Go for the next item in the list
         }
         // Try to bind the socket to "listen" for incoming connections
-        if (bind(socketfd_udp, p_udp->ai_addr, p_udp->ai_addrlen) == -1) {
+        if (bind(socketfd_udp, p->ai_addr, p->ai_addrlen) == -1) {
             close(socketfd_udp);
             perror("listener: bind");
             continue;
@@ -120,10 +119,13 @@ void ServerM::create_sockets() {
     }
 
     // No valid socket was found in the linked list
-    if (p_udp == NULL) {
+    if (p == NULL) {
         fprintf(stderr, "Failed to create UDP socket (M)\n");
         exit(2);
     }
+
+    struct sockaddr_in *address = (struct sockaddr_in *)p->ai_addr;
+    my_udp_port = htons(address->sin_port);
 
     // Loop through the linked list to get a valid socket to connect with server S
     for (pS = servinfoS; pS != NULL; pS = pS->ai_next) {
@@ -151,7 +153,7 @@ void ServerM::create_sockets() {
     }
 
         // Loop through the linked list to get a valid socket to connect with server U
-    for (pU = servinfoS; pU != NULL; pU = pU->ai_next) {
+    for (pU = servinfoU; pU != NULL; pU = pU->ai_next) {
         if ((socketfdU = socket(pU->ai_family, pU->ai_socktype, pU->ai_protocol)) == -1)
             continue; // Go for the next item in the list
         break; // No errors while creating the socket, so we got a valid one in the list
@@ -164,8 +166,8 @@ void ServerM::create_sockets() {
     }
 
     // Loop through the linked list to get a valid socket to receive incoming TCP connections
-    for (p_tcp = servinfo_tcp; p_tcp != NULL; p_tcp = p_tcp->ai_next) {
-        if ((socketfd_tcp = socket(p_tcp->ai_family, p_tcp->ai_socktype, p_tcp->ai_protocol)) == -1) {
+    for (p = servinfo_tcp; p != NULL; p = p->ai_next) {
+        if ((socketfd_tcp = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
             perror("listener: socket");
             continue; // Go for the next item in the list
         }
@@ -175,7 +177,7 @@ void ServerM::create_sockets() {
             exit(2);
         }
         // Try to bind the socket to "listen" for incoming connections
-        if (bind(socketfd_tcp, p_tcp->ai_addr, p_tcp->ai_addrlen) == -1) {
+        if (bind(socketfd_tcp, p->ai_addr, p->ai_addrlen) == -1) {
             close(socketfd_tcp);
             perror("listener: bind");
             continue;
@@ -184,10 +186,12 @@ void ServerM::create_sockets() {
     }
 
     // No valid socket was found in the linked list
-    if (p_tcp == NULL) {
+    if (p == NULL) {
         fprintf(stderr, "Failed to create TCP socket (M)\n");
         exit(2);
     }
+    address = (struct sockaddr_in *)p->ai_addr;
+    my_tcp_port = htons(address->sin_port);
 }
 
 void sigchld_handler(int s) {
@@ -220,21 +224,19 @@ void ServerM::listen_for_connections() {
 void ServerM::receive_initial_data() {
     int numbytes;
     uint16_t port;
-    unsigned char* buf = receive_udp(&numbytes, &port);
+    unsigned char buf[UDP_MAXBUFLEN];
+    receive_udp(buf, &numbytes, &port);
     char server_id = get_sender_id(port);
     fill_room_data(server_id, buf, numbytes);
-    delete [] buf;
-    printf("The main server has received the room status from Server %c using UDP over port %i.\n", server_id, port);
-    buf = receive_udp(&numbytes, &port);
+    printf("The main server has received the room status from Server %c using UDP over port %i.\n", server_id, my_udp_port);
+    receive_udp(buf, &numbytes, &port);
     server_id = get_sender_id(port);
     fill_room_data(server_id, buf, numbytes);
-    delete [] buf;
-    printf("The main server has received the room status from Server %c using UDP over port %i.\n", server_id, port);
-    buf = receive_udp(&numbytes, &port);
+    printf("The main server has received the room status from Server %c using UDP over port %i.\n", server_id, my_udp_port);
+    receive_udp(buf, &numbytes, &port);
     server_id = get_sender_id(port);
     fill_room_data(server_id, buf, numbytes);
-    delete [] buf;
-    printf("The main server has received the room status from Server %c using UDP over port %i.\n", server_id, port);
+    printf("The main server has received the room status from Server %c using UDP over port %i.\n", server_id, my_udp_port);
 }
 
 /*
@@ -277,8 +279,7 @@ void ServerM::fill_room_data(char server, unsigned char *buffer, int length) {
 /*
     Receives data from the selected server (S, D, or U).
 */
-unsigned char *ServerM::receive_udp(int *numbytes, uint16_t *port) {
-    unsigned char* buf = new unsigned char[UDP_MAXBUFLEN];
+void ServerM::receive_udp(unsigned char *buf, int *numbytes, uint16_t *sender_port) {
     struct sockaddr from_addr;
     memset(&from_addr, 0, sizeof from_addr);
     socklen_t from_len = sizeof from_addr;
@@ -287,9 +288,8 @@ unsigned char *ServerM::receive_udp(int *numbytes, uint16_t *port) {
         perror("receive_from");
         exit(3);
     }
-    struct sockaddr_in *from_addr_in = (struct sockaddr_in*)&from_addr;
-    (*port) = htons(from_addr_in->sin_port);
-    return buf;
+    struct sockaddr_in *sender = (struct sockaddr_in*)&from_addr;
+    (*sender_port) = htons(sender->sin_port);
 }
 
 void ServerM::print_room_data(char server) {
@@ -308,21 +308,16 @@ void ServerM::print_room_data(char server) {
 /*
     Accepts an incoming connection, 
 */
-int ServerM::accept_connection(uint16_t *port) {
-    struct sockaddr *from_addr;
-    socklen_t addr_size = sizeof from_addr;
-    int new_fd = accept(socketfd_tcp, from_addr, &addr_size);
+int ServerM::accept_connection() {
+    int new_fd = accept(socketfd_tcp, NULL, NULL);
     if (new_fd == -1) {
         perror("accept");
         exit(5);
     }
-    struct sockaddr_in *from_addr_in = (sockaddr_in*)from_addr;
-    (*port) = htons(from_addr_in->sin_port);
     return new_fd;
 }
 
-unsigned char *ServerM::receive_tcp(int socketfd, int *numbytes) {
-    unsigned char *buffer = new unsigned char[TCP_MAXBUFLEN];
+void ServerM::receive_tcp(unsigned char *buffer, int *numbytes, int socketfd) {
     if (((*numbytes) = recv(socketfd, buffer, TCP_MAXBUFLEN - 1, 0)) == -1) {
         perror("recv");
         exit(6);
@@ -352,12 +347,13 @@ void ServerM::lookup_credentials(string uname, string enc_pass, unsigned char *r
         if (!uname_match) continue; // Not the right username, go to next line
         int j = 0;
         bool pass_match = true;
-        for (int i = delim_loc + 2; i < line.length(); i++, j++) {
+        for (int i = line.find(' ', delim_loc) + 1; i < line.length(); i++, j++) {
             if (enc_pass[j] != line[i]) {
                 pass_match = false;
                 break;
             }
         }
+        cout << endl;
         if (!pass_match) { // Username found, but incorrect password
             (*response_code) = 2;
             return;
@@ -375,7 +371,7 @@ void ServerM::lookup_credentials(string uname, string enc_pass, unsigned char *r
     the user is authenticated (guests or failure = false), and sets the response code to be sent
     (0 = success, 1 = username not found, 2 = incorrect password).
 */
-bool ServerM::authenticate(unsigned char *buffer, int numbytes, unsigned char *response_code) {
+bool ServerM::authenticate(unsigned char *buffer, int numbytes, unsigned char *response_code, string *username) {
     // Skip the first byte that describes the required function
     string uname = "";
     string enc_pass = "";
@@ -383,52 +379,170 @@ bool ServerM::authenticate(unsigned char *buffer, int numbytes, unsigned char *r
     for (; buffer[i] != 0; i++) {
         uname += buffer[i];
     }
+    i++; // Skip separator
     for (; i < numbytes; i++) {
         enc_pass += buffer[i];
     }
     if (enc_pass.length() == 0){
         (*response_code) = 0;
+        printf("The main server received the guest request for %s using TCP over port %i. ", uname.c_str(), my_tcp_port);
+        printf("The main server accepts %s as a guest.\n", uname.c_str());
+        (*username) = uname;
         return false;
     }
+    printf("The main server received the authentication for %s using TCP over port %i.\n", uname.c_str(), my_tcp_port);
     lookup_credentials(uname, enc_pass, response_code);
+    (*username) = uname;
     return (*response_code) == 0;
 }
 
-void ServerM::send_response_code(unsigned char response_code) {
-
-    if (send(socketfd_tcp, &response_code, 1, 0) == -1) {
+void ServerM::send_response_code(int socketfd, unsigned char response_code) {
+    if (send(socketfd, &response_code, 1, 0) == -1) {
         perror("send");
         exit(4);
     }
+}
+
+void ServerM::process_query_request(unsigned char *buffer, int numbytes, unsigned char *response_code, string username) {
+    // buffer[0] contains the request type code (1) and buffer[1] contains the letter of the room ID
+    char backend_server = buffer[1];
+    if (backend_server != 'S' && backend_server != 'D' && backend_server != 'U') {
+        (*response_code) = 2; // Not able to find the room layout.
+        return;
+    }
+    char room_number_str[numbytes - 2];
+    for (int i = 2; i < numbytes; i++) {
+        room_number_str[i - 2] = buffer[i];
+    }
+    unsigned short room_number = (unsigned short)atoi(room_number_str);
+    printf("The main server has received the availability request on Room %c%i from %s", backend_server, room_number, username.c_str());
+    printf(" using TCP over port %i.\n", my_tcp_port);
+    struct addrinfo *pointer;
+    switch (backend_server) {
+        case 'S': pointer = pS; break;
+        case 'D': pointer = pD; break;
+        case 'U': pointer = pU; break;
+        // Not able to find the room layout.
+        default:(*response_code) = 2; return;
+    }
+    unsigned char out_buffer[3];
+    out_buffer[0] = 0;
+    out_buffer[1] = (room_number >> 8) & 0xFF;
+    out_buffer[2] = room_number & 0xFF;
+    // Send data to the appropriate server
+    if ((numbytes = sendto(socketfd_udp, out_buffer, 3, 0, pointer->ai_addr, pointer->ai_addrlen)) == -1) {
+        perror("send");
+        exit(3);
+    }
+    printf("The main server sent a request to Server %c.\n", backend_server);
+    unsigned char in_buf[UDP_MAXBUFLEN];
+    int in_numbytes;
+    uint16_t sender_port;
+    // Get response from server
+    receive_udp(in_buf, &in_numbytes, &sender_port);
+    printf("The main server received the response from Server %c using UDP over port %i.\n", backend_server, my_udp_port);
+    (*response_code) = in_buf[0]; // Pass the response code obtained from backend server
+}
+
+void ServerM::process_reservation_request(unsigned char *buffer, int numbytes, unsigned char *response_code, string username, bool is_authenticated) {
+    // buffer[0] contains the request type code (1) and buffer[1] contains the letter of the room ID
+    char backend_server = buffer[1];
+    if (backend_server != 'S' && backend_server != 'D' && backend_server != 'U') {
+        (*response_code) = 2; // Not able to find the room layout.
+        return;
+    }
+    char room_number_str[numbytes - 2];
+    for (int i = 2; i < numbytes; i++) {
+        room_number_str[i - 2] = buffer[i];
+    }
+    unsigned short room_number = (unsigned short)atoi(room_number_str);
+    printf("The main server has received the reservation request on Room %c%i from %s", backend_server, room_number, username.c_str());
+    printf(" using TCP over port %i.\n", my_tcp_port);
+    if (!is_authenticated) {
+        printf("%s cannot make a reservation.\n", username.c_str());
+        (*response_code) = 3; // Unauthenticated client
+        return;
+    }
+    struct addrinfo *pointer;
+    switch (backend_server) {
+        case 'S': pointer = pS; break;
+        case 'D': pointer = pD; break;
+        case 'U': pointer = pU; break;
+        // Not able to find the room layout.
+        default:(*response_code) = 2; return;
+    }
+    unsigned char out_buffer[3];
+    out_buffer[0] = 1;
+    out_buffer[1] = (room_number >> 8) & 0xFF;
+    out_buffer[2] = room_number & 0xFF;
+    // Send data to the appropriate server
+    if ((numbytes = sendto(socketfd_udp, out_buffer, 3, 0, pointer->ai_addr, pointer->ai_addrlen)) == -1) {
+        perror("send");
+        exit(3);
+    }
+    printf("The main server sent a request to Server %c.\n", backend_server);
+    unsigned char in_buf[UDP_MAXBUFLEN];
+    int in_numbytes;
+    // Get response from server
+    uint16_t sender_port;
+    receive_udp(in_buf, &in_numbytes, &sender_port);
+    if (in_buf[0] == 0) { // Room status was updated
+        printf("The main server received the response and the updated room status from Server %c using UDP over port %i.\n", backend_server, my_udp_port);
+        // Update the room status
+        switch (backend_server) {
+            case 'S': rooms_S[room_number]--; break;
+            case 'D': rooms_D[room_number]--; break;
+            case 'U': rooms_U[room_number]--; break;
+            default: break;
+        }
+        printf("The room status of Room %c%s has been updated.\n", backend_server, room_number_str);
+    }
+    else { // Room count was  not updated
+        printf("The main server received the response from Server %c using UDP over port %i.\n", backend_server, my_udp_port);
+    }
+    (*response_code) = in_buf[0]; // Pass the response code obtained from backend server
 }
 
 int main(int argc, char * argv[]) {
     ServerM main_server;
     // Main accept() loop
     while (1) {
-        uint16_t port;
-        int new_fd = main_server.accept_connection(&port);
+        int new_fd = main_server.accept_connection();
         int numbytes;
         unsigned char *buffer;
         if (!fork()) {
             main_server.close_parent_socket();
             bool authenticated = false;
             unsigned char response_code;
+            string username;
+            unsigned char buffer[TCP_MAXBUFLEN];
             while (1) {
-                buffer = main_server.receive_tcp(new_fd, &numbytes);
+                main_server.receive_tcp(buffer, &numbytes, new_fd);
                 if (numbytes == 0) { // Client disconnected
                     main_server.close_child_socket(new_fd);
+                    cout << "Client disconnected." << endl;
                     exit(0);
                 }
                 if (buffer[0] == 0) { // Authentication
-                    authenticated = main_server.authenticate(buffer, numbytes, &response_code);
-                    main_server.send_response_code(response_code);
+                    authenticated = main_server.authenticate(buffer, numbytes, &response_code, &username);
+                    main_server.send_response_code(new_fd, response_code);
+                    if (response_code == 0 && !authenticated)
+                        cout << "The main server sent the guest response to the client." << endl;
+                    else
+                        cout << "The main server sent the authentication result to the client." << endl;
                 }
                 else if (buffer[0] == 1) { // Query
-
+                    main_server.process_query_request(buffer, numbytes, &response_code, username);
+                    main_server.send_response_code(new_fd, response_code);
+                    cout << "The main server sent the availability information to the client." << endl;
                 }
                 else if (buffer[0] == 2) { // Reservation
-
+                    main_server.process_reservation_request(buffer, numbytes, &response_code, username, authenticated);
+                    main_server.send_response_code(new_fd, response_code);
+                    if (!authenticated)
+                        cout << "The main server sent the error message to the client." << endl;
+                    else
+                        cout << "The main server sent the reservation result to the client." << endl;
                 }
             }
         }
