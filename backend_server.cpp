@@ -17,13 +17,18 @@
     Default constructor.
 */
 BackendServer::BackendServer(const char *server_id, const char *my_udp_port, const char *my_data_fname) {
+    // Initialize the server's data
     SERVER_ID = server_id;
     MY_UDP_PORT = my_udp_port;
     MY_DATA_FNAME = my_data_fname;
+    // Load data from file
     load_data();
+    // Create the addrinfo structs
     get_addrinfos();
+    // Create the required sockets
     create_sockets();
     printf("The Server %s is up and running using UDP on port %s.\n", SERVER_ID, MY_UDP_PORT);
+    // Send the initial data to the main server
     send_initial_data();
     printf("The Server %s has sent the room status to the main server.\n", SERVER_ID);
 }
@@ -159,28 +164,35 @@ void BackendServer::receive_loop() {
     int numbytes;
     unsigned char buf[MAXBUFLEN];
     unsigned char response_code;
+    // Run forever
     while (1) {
+        // Receive a request
         receive_udp(buf, &numbytes);
         if (buf[0] == 0) { // Query request
-            query(buf, &response_code);
-            send_response(response_code);
+            query(buf, &response_code); // Check for availability and get the response code
+            send_response(response_code); // Send the response code to the main server
             printf("The Server %s finished sending the response to the main server.\n", SERVER_ID);
         }
         else if (buf[0] == 1) { // Reservation request
-            reservation(buf, &response_code);
-            send_response(response_code);
-            if (response_code == 0)
+            reservation(buf, &response_code); // Get the response code and reserve the room if necessary
+            send_response(response_code); // Send the response code to the main server
+            if (response_code == 0) // If reservation was successful
                 printf("The Server %s finished sending the response and the updated room status to the main server.\n", SERVER_ID);
-            else
+            else // If reservation failed
                 printf("The Server %s finished sending the response to the main server.\n", SERVER_ID);
         }
     }
 }
 
+/*
+    Searches for the requested room number and sets the response code.
+*/
 void BackendServer::query(unsigned char *buffer, unsigned char *response_code) {
     unsigned short room_number;
     printf("The Server %s received an availability request from the main server.\n", SERVER_ID);
+    // Put the room number into an unsigned short
     room_number = (((unsigned short)buffer[1]) << 8) | buffer[2];
+    // Look for the room number in the map
     map<unsigned short, unsigned short>::iterator it = room_status.find(room_number);
     if (it == room_status.end()) // Room not found
     {
@@ -198,10 +210,15 @@ void BackendServer::query(unsigned char *buffer, unsigned char *response_code) {
     (*response_code) = 0; // Room exists, and status is > 0
 }
 
+/*
+    Searches for the requested room number and sets the response code.
+*/
 void BackendServer::reservation(unsigned char *buffer, unsigned char *response_code) {
     unsigned short room_number;
     printf("The Server %s received a reservation request from the main server.\n", SERVER_ID);
+    // Put the room number into an unsigned short
     room_number = (((unsigned short)buffer[1]) << 8) | buffer[2];
+    // Look for the room number in the map
     map<unsigned short, unsigned short>::iterator it = room_status.find(room_number);
     if (it == room_status.end()) // Room not found
     {
@@ -215,10 +232,10 @@ void BackendServer::reservation(unsigned char *buffer, unsigned char *response_c
         (*response_code) = 1;
         return;
     }
+    // Update the room status
     it->second--;
     printf("Successful reservation. The count of Room %s%i is now %i.\n", SERVER_ID, room_number, it->second);
-    // Response code and two bytes of unsigned short room count
-    (*response_code) = 0;
+    (*response_code) = 0; // Reservation was successful
 }
 
 void BackendServer::send_response(unsigned char response_code) {
@@ -232,6 +249,7 @@ void BackendServer::send_response(unsigned char response_code) {
 
 /*
     Receives data from the main server
+    Source: // Beej’s Guide to Network Programming
 */
 void BackendServer::receive_udp(unsigned char *buf, int *numbytes) {
     struct sockaddr from_addr;

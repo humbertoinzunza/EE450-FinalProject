@@ -22,19 +22,25 @@ Client::Client() {
 }
 
 Client::~Client() {
-
+    // Free resources
+    freeaddrinfo(servinfo);
+    close(socketfd);
 }
 
+/*
+    Shifts alphanumeric characters 3 values to the right.
+*/
 string Client::basic_encrypt(string msg) {
+    // Copy message into the result string
     string cypher_text = msg;
     for (unsigned int i = 0; i < msg.length(); i++) {
-        if (msg[i] >= 'a' && msg[i] <= 'z') 
+        if (msg[i] >= 'a' && msg[i] <= 'z') // Lowercase letter
             cypher_text[i] = (msg[i] + 3 - 'a') % 26 + 'a';
-        else if (msg[i] >= 'A' && msg[i] <= 'Z') 
+        else if (msg[i] >= 'A' && msg[i] <= 'Z') // Uppercase letter
             cypher_text[i] = (msg[i] + 3 - 'A') % 26 + 'A';
-        else if (msg[i] >= '0' && msg[i] <= '9') 
+        else if (msg[i] >= '0' && msg[i] <= '9') // Digits
             cypher_text[i] = (msg[i] + 3 - '0') % 10 + '0';
-        else
+        else // Any other character
             cypher_text[i] = msg[i];
     }
     return cypher_text;
@@ -193,6 +199,7 @@ void Client::create_sockets() {
         exit(2);
     }
 
+    // Get the dynamically assign port and store it
     struct sockaddr_in *my_address;
     socklen_t my_address_len = sizeof(my_address);
     if (getsockname(socketfd, (struct sockaddr *)my_address, &my_address_len) == -1) {
@@ -204,9 +211,12 @@ void Client::create_sockets() {
 
 bool Client::authenticate(bool use_sha256) {
     string username, password;
+    // Read the credentials from the command line
     get_user_credentials(&username, &password);
+    // Store the username
     id = username;
     if (!use_sha256) {
+        // Encrypt credentials
         string enc_username = basic_encrypt(username);
         string enc_password = basic_encrypt(password);
         // Build out buffer
@@ -330,6 +340,9 @@ void Client::get_response_code(unsigned char *in_buffer, int *numbytes) {
     }
 }
 
+/*
+    Prints the adequate response message based on the response code and the type of request.
+*/
 void Client::print_response_msg(unsigned char response_code, bool is_query_request, string room_code) {
     printf("The client received the response from the main server using TCP over port %i.\n", my_tcp_port);
     if (is_query_request) {
@@ -358,15 +371,19 @@ string Client::uchar_tohex(unsigned char *chars, int length) {
     char const hex_characters[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
     char c_str[length * 2];
     for (int i = 0, j = 0; i < length; i++, j += 2) {
+        // Get character that represents byte's most significant nibble
         c_str[j] = hex_characters[(chars[i] & 0xF0) >> 4];
+        // Get character that represents byte's most significant nibble
         c_str[j + 1] = hex_characters[chars[i] & 0x0F];
     }
+    // Put the array into a string
     string str(c_str);
     return str;
 }
 
 int main(int argc, char *argv[]) {
     bool use_sha256;
+    // Read the command line arguments to see if SHA256 will be used
     if (argc > 1) {
         char *arg = argv[1];
         if (arg[0] == '-' && arg[1] == 'e')
@@ -376,7 +393,9 @@ int main(int argc, char *argv[]) {
     }
     else
         use_sha256 = false;
+    // Instantiate the client object
     Client client;
+    // Authenticate the user
     bool authenticated = client.authenticate(use_sha256);
     while (!authenticated){
         authenticated = client.authenticate(use_sha256);
@@ -385,24 +404,25 @@ int main(int argc, char *argv[]) {
     string request_type;
     unsigned char in_buffer[MAXBUFLEN];
     int numbytes;
+    // Infinite loop where the client can send a request each iteration
     while (1) {
         cout << "Please enter the room code: ";
         cin >> room_code;
         cout << "Would you like to search for the availability or make a reservation? ";
         cout << "(Enter “Availability” to search for the availability or Enter “Reservation” to make a reservation ): ";
         cin >> request_type;
-        request_type = to_lower(request_type);
-        if (request_type == "availability") {
-            client.send_room_data(room_code, 1);
+        request_type = to_lower(request_type); // To be case insensitive
+        if (request_type == "availability") { // Availability request
+            client.send_room_data(room_code, 1); // Send request with room number
             printf("%s sent an availability request to the main server.\n", client.id.c_str());
-            client.get_response_code(in_buffer, &numbytes);
-            client.print_response_msg(in_buffer[0], true, room_code);
+            client.get_response_code(in_buffer, &numbytes); // Get the response code
+            client.print_response_msg(in_buffer[0], true, room_code); // Print the corresponding message
         }
-        else if (request_type == "reservation") {
-            client.send_room_data(room_code, 2);
+        else if (request_type == "reservation") { // Reservation request
+            client.send_room_data(room_code, 2); // Send request with room number
             printf("%s sent a reservation request to the main server.\n", client.id.c_str());
-            client.get_response_code(in_buffer, &numbytes);
-            client.print_response_msg(in_buffer[0], false, room_code);
+            client.get_response_code(in_buffer, &numbytes); // Get the response code
+            client.print_response_msg(in_buffer[0], false, room_code); // Print the corresponding message
         }
     }
 }

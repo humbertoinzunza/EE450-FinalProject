@@ -235,10 +235,14 @@ void ServerM::receive_initial_data() {
     int numbytes;
     uint16_t port;
     unsigned char buf[UDP_MAXBUFLEN];
+    // Get data from UDP socket and read the sender's port
     receive_udp(buf, &numbytes, &port);
+    // Check who is the sender given the port
     char server_id = get_sender_id(port);
+    // Put the data into the corresponding map
     fill_room_data(server_id, buf, numbytes);
     printf("The main server has received the room status from Server %c using UDP over port %i.\n", server_id, my_udp_port);
+    // Repeat two more times
     receive_udp(buf, &numbytes, &port);
     server_id = get_sender_id(port);
     fill_room_data(server_id, buf, numbytes);
@@ -270,6 +274,7 @@ void ServerM::close_parent_socket() {
 */
 void ServerM::fill_room_data(char server, unsigned char *buffer, int length) {
     map<unsigned short,unsigned short> *data;
+    // Pick the appropiate map data structure given the server ID
     switch (server) {
         case 'S': data = &rooms_S; break;
         case 'D': data = &rooms_D; break;
@@ -298,10 +303,14 @@ void ServerM::receive_udp(unsigned char *buf, int *numbytes, uint16_t *sender_po
         perror("receive_from");
         exit(3);
     }
+    // Get the sender's port
     struct sockaddr_in *sender = (struct sockaddr_in*)&from_addr;
     (*sender_port) = htons(sender->sin_port);
 }
 
+/*
+    Print the room data for the chosen server. For debugging purposes.
+*/
 void ServerM::print_room_data(char server) {
     map<unsigned short, unsigned short> *data;
     switch (server) {
@@ -316,7 +325,8 @@ void ServerM::print_room_data(char server) {
 }
 
 /*
-    Accepts an incoming connection, 
+    Accepts an incoming connection.
+    Source: // Beej’s Guide to Network Programming
 */
 int ServerM::accept_connection() {
     int new_fd = accept(socketfd_tcp, NULL, NULL);
@@ -338,6 +348,10 @@ void ServerM::receive_tcp(unsigned char *buffer, int *numbytes, int socketfd) {
 void ServerM::close_child_socket(int sd) {
     close(sd);
 }
+
+/*
+    Looks up credentials in the appropiate file. Only for SHA256.
+*/
 void ServerM::lookup_sha256_credentials(unsigned char *enc_username, unsigned char *enc_password, unsigned char *response_code) {
     ifstream data_file;
     data_file.open(EXTRA_USERDB);
@@ -346,24 +360,29 @@ void ServerM::lookup_sha256_credentials(unsigned char *enc_username, unsigned ch
     char const hex_characters[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
     unsigned char current_byte[2];
     int i, j = 0;
+    // Go line by line
     for (string line; getline(data_file, line);) {
         // Location of delimiter
         uname_match = true;
         for (i = 0, j = 0; i < 32; i++, j += 2) {
-            // Convert current byte to hex representation
+            // Convert current byte to hex representation (byte[0] is most significant nibble)
             current_byte[0] = hex_characters[(enc_username[i] & 0xF0) >> 4];
             current_byte[1] = hex_characters[enc_username[i] & 0x0F];
+            // If the two current hex chars in the line don't match with the current unsigned char's hex representation
+            // then the username doesn't matches. End loop early.
             if (current_byte[0] != line[j] || current_byte[1] != line[j + 1]) {
                 uname_match = false;
-                break; // Go to next line
+                break; // Failed
             }
         }
-        if (!uname_match) continue;
+        if (!uname_match) continue; // Username didn't match so go to next line
         pass_match = true;
         for (i = 0, j += 2; i < 32; i++, j += 2) {
-            // Convert current byte to hex representation
+            // Convert current byte to hex representation (byte[0] is most significant nibble)
             current_byte[0] = hex_characters[(enc_password[i] & 0xF0) >> 4];
             current_byte[1] = hex_characters[enc_password[i] & 0x0F];
+            // If the two current hex chars in the line don't match with the current unsigned char's hex representation
+            // then the password doesn't matches. End loop early.
             if (current_byte[0] != line[j] || current_byte[1] != line[j + 1]) {
                 pass_match = false;
                 break;
@@ -381,6 +400,9 @@ void ServerM::lookup_sha256_credentials(unsigned char *enc_username, unsigned ch
     (*response_code) = 1; // Username not found
 }
 
+/*
+    Looks up credentials in the appropiate file. Only for basic encryption algorithm.
+*/
 void ServerM::lookup_credentials(string uname, string enc_pass, unsigned char *response_code) {
     ifstream data_file;
     data_file.open(USERDB);
@@ -389,10 +411,12 @@ void ServerM::lookup_credentials(string uname, string enc_pass, unsigned char *r
     for (string line; getline(data_file, line);) {
         // Location of delimiter
         delim_loc = line.find(',');
+        // If the username length is not the same as the index of the delimiter, then the lengths don't match
+        // and it can't possibly be the username in question, so go to the next line
         if (uname.length() != delim_loc) continue;
         uname_match = true;
         for (int i = 0; i < delim_loc; i++) {
-            if (uname[i] != line[i]) {
+            if (uname[i] != line[i]) { // If one character is different, then it's not a match
                 uname_match = false;
                 break;
             }
@@ -401,7 +425,7 @@ void ServerM::lookup_credentials(string uname, string enc_pass, unsigned char *r
         int j = 0;
         bool pass_match = true;
         for (int i = line.find(' ', delim_loc) + 1; i < line.length(); i++, j++) {
-            if (enc_pass[j] != line[i]) {
+            if (enc_pass[j] != line[i]) { // If one character is different, then it's not a match
                 pass_match = false;
                 break;
             }
@@ -438,22 +462,27 @@ string ServerM::uchar_tohex(unsigned char *chars, int length) {
     (0 = success, 1 = username not found, 2 = incorrect password).
 */
 bool ServerM::authenticate(unsigned char *buffer, int numbytes, unsigned char *response_code, string *username, bool use_sha256) {
+    // If using sha256 algorithm
     if (use_sha256) {
         unsigned char enc_uname[32];
         unsigned char enc_pass[32];
         
         int i = 0;
+        // Fill the username array (32 bytes) from the input buffer
         for (; i < 32; i++) {
             enc_uname[i] = buffer[i + 1];
         }
         int j = 0;
         bool pass_is_empty = true;
+        // Fill the password array (32 bytes) from the input buffer
         for (; i < 64; i++, j++) {
             enc_pass[j] = buffer[i + 1];
+            // If all bytes of the password are 0, then there is no password (guest login)
             if (enc_pass[j] != 0) pass_is_empty = false;
         }
+        // Convert the username to hexadecimal string representation
         string uname_str = uchar_tohex(enc_uname, 32);
-        if (pass_is_empty){
+        if (pass_is_empty) { // It's a guest login
             (*response_code) = 0;
             printf("The main server received the guest request for %s using TCP over port %i. ", uname_str.c_str(), my_tcp_port);
             printf("The main server accepts %s as a guest.\n", uname_str.c_str());
@@ -461,7 +490,9 @@ bool ServerM::authenticate(unsigned char *buffer, int numbytes, unsigned char *r
             return false;
         }
         printf("The main server received the authentication for %s using TCP over port %i.\n", uname_str.c_str(), my_tcp_port);
+        // If it's not a guest login look for the credentials in the file
         lookup_sha256_credentials(enc_uname, enc_pass, response_code);
+        // Store the username
         (*username) = uname_str;
     }
     else {
@@ -469,13 +500,16 @@ bool ServerM::authenticate(unsigned char *buffer, int numbytes, unsigned char *r
         string uname = "";
         string enc_pass = "";
         int i = 1;
+        // Put the username into a string
         for (; buffer[i] != 0; i++) {
             uname += buffer[i];
         }
         i++; // Skip separator
+        // Put the password into a string
         for (; i < numbytes; i++) {
             enc_pass += buffer[i];
         }
+        // If there is no password, then it is a guest login
         if (enc_pass.length() == 0){
             (*response_code) = 0;
             printf("The main server received the guest request for %s using TCP over port %i. ", uname.c_str(), my_tcp_port);
@@ -484,9 +518,12 @@ bool ServerM::authenticate(unsigned char *buffer, int numbytes, unsigned char *r
             return false;
         }
         printf("The main server received the authentication for %s using TCP over port %i.\n", uname.c_str(), my_tcp_port);
+        // If the password has any characters, then look for the credentials into the appropiate file
         lookup_credentials(uname, enc_pass, response_code);
+        // Store the username
         (*username) = uname;
     }
+    // Return a boolean indicating if the username is authenticated (not a guest)
     return (*response_code) == 0;
 }
 
@@ -501,18 +538,22 @@ void ServerM::send_response_code(int socketfd, unsigned char response_code) {
 void ServerM::process_query_request(unsigned char *buffer, int numbytes, unsigned char *response_code, string username) {
     // buffer[0] contains the request type code (1) and buffer[1] contains the letter of the room ID
     char backend_server = buffer[1];
+    // If it starts with any letter other than S, D, or U then it's not a valid room layout
     if (backend_server != 'S' && backend_server != 'D' && backend_server != 'U') {
         (*response_code) = 2; // Not able to find the room layout.
         return;
     }
+    // Get the room number from the buffer
     char room_number_str[numbytes - 2];
     for (int i = 2; i < numbytes; i++) {
         room_number_str[i - 2] = buffer[i];
     }
+    // Put the room number into an unsigned short
     unsigned short room_number = (unsigned short)atoi(room_number_str);
     printf("The main server has received the availability request on Room %c%i from %s", backend_server, room_number, username.c_str());
     printf(" using TCP over port %i.\n", my_tcp_port);
     struct addrinfo *pointer;
+    // Find the pointer of the socket address where the request is to be sent
     switch (backend_server) {
         case 'S': pointer = pS; break;
         case 'D': pointer = pD; break;
@@ -521,9 +562,9 @@ void ServerM::process_query_request(unsigned char *buffer, int numbytes, unsigne
         default:(*response_code) = 2; return;
     }
     unsigned char out_buffer[3];
-    out_buffer[0] = 0;
-    out_buffer[1] = (room_number >> 8) & 0xFF;
-    out_buffer[2] = room_number & 0xFF;
+    out_buffer[0] = 0; // Query request
+    out_buffer[1] = (room_number >> 8) & 0xFF; // Most significant byte 
+    out_buffer[2] = room_number & 0xFF; // Least significant byte
     // Send data to the appropriate server (Beej’s Guide to Network Programming)
     if ((numbytes = sendto(socketfd_udp, out_buffer, 3, 0, pointer->ai_addr, pointer->ai_addrlen)) == -1) {
         perror("send");
@@ -542,14 +583,17 @@ void ServerM::process_query_request(unsigned char *buffer, int numbytes, unsigne
 void ServerM::process_reservation_request(unsigned char *buffer, int numbytes, unsigned char *response_code, string username, bool is_authenticated) {
     // buffer[0] contains the request type code (1) and buffer[1] contains the letter of the room ID
     char backend_server = buffer[1];
+    // If it starts with any letter other than S, D, or U then it's not a valid room layout
     if (backend_server != 'S' && backend_server != 'D' && backend_server != 'U') {
         (*response_code) = 2; // Not able to find the room layout.
         return;
     }
+    // Get the room number from the buffer
     char room_number_str[numbytes - 2];
     for (int i = 2; i < numbytes; i++) {
         room_number_str[i - 2] = buffer[i];
     }
+    // Put the room number into an unsigned short
     unsigned short room_number = (unsigned short)atoi(room_number_str);
     printf("The main server has received the reservation request on Room %c%i from %s", backend_server, room_number, username.c_str());
     printf(" using TCP over port %i.\n", my_tcp_port);
@@ -559,6 +603,7 @@ void ServerM::process_reservation_request(unsigned char *buffer, int numbytes, u
         return;
     }
     struct addrinfo *pointer;
+    // Find the pointer of the socket address where the request is to be sent
     switch (backend_server) {
         case 'S': pointer = pS; break;
         case 'D': pointer = pD; break;
@@ -567,9 +612,9 @@ void ServerM::process_reservation_request(unsigned char *buffer, int numbytes, u
         default:(*response_code) = 2; return;
     }
     unsigned char out_buffer[3];
-    out_buffer[0] = 1;
-    out_buffer[1] = (room_number >> 8) & 0xFF;
-    out_buffer[2] = room_number & 0xFF;
+    out_buffer[0] = 1; // Reservation request
+    out_buffer[1] = (room_number >> 8) & 0xFF; // Most significant byte 
+    out_buffer[2] = room_number & 0xFF; // Least significant byte 
     // Send data to the appropriate server (Beej’s Guide to Network Programming)
     if ((numbytes = sendto(socketfd_udp, out_buffer, 3, 0, pointer->ai_addr, pointer->ai_addrlen)) == -1) {
         perror("send");
@@ -600,8 +645,9 @@ void ServerM::process_reservation_request(unsigned char *buffer, int numbytes, u
 
 int main(int argc, char * argv[]) {
     bool use_sha256;
+    // Check if sha256 will be used
     if (argc > 1) {
-        char *arg = argv[1];
+         char *arg = argv[1];
         if (arg[0] == '-' && arg[1] == 'e')
             use_sha256 = true;
         else
@@ -609,19 +655,22 @@ int main(int argc, char * argv[]) {
     }
     else
         use_sha256 = false;
+    // Instantiate the server object
     ServerM main_server;
     // Main accept() loop with fork() (Beej’s Guide to Network Programming)
     while (1) {
+        // Accept incoming connections
         int new_fd = main_server.accept_connection();
         int numbytes;
         unsigned char *buffer;
-        if (!fork()) {
+        if (!fork()) { // Fork into child process
             main_server.close_parent_socket();
             bool authenticated = false;
             unsigned char response_code;
             string username;
             unsigned char buffer[TCP_MAXBUFLEN];
             while (1) {
+                // Get data from the client
                 main_server.receive_tcp(buffer, &numbytes, new_fd);
                 if (numbytes == 0) { // Client disconnected
                     main_server.close_child_socket(new_fd);
@@ -651,6 +700,7 @@ int main(int argc, char * argv[]) {
                 }
             }
         }
+        // Parent process doesn't need this socket
         main_server.close_child_socket(new_fd);
     }
 }
