@@ -16,14 +16,15 @@ class Client
         void create_sockets();
         void get_user_credentials(string *, string *);
         void print_authentication_error(string, bool, unsigned char);
-        
+        string uchar_tohex(unsigned char *, int);
+
     public:
         string id;
         Client();
         ~Client();
         string basic_encrypt(string);
         unsigned int *sha256(string);
-        bool authenticate();
+        bool authenticate(bool);
         void send_room_data(string, unsigned char);
         void get_response_code(unsigned char *, int *);
         void print_response_msg(unsigned char, bool, string);

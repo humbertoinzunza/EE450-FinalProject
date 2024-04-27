@@ -40,7 +40,6 @@ string Client::basic_encrypt(string msg) {
     return cypher_text;
 }
 
-/*With the help of https://sha256algorithm.com/*/
 unsigned int *Client::sha256(string msg) {
     // 512-bit block, should be enough for password of length 5-50
     unsigned char block[64];
@@ -76,6 +75,7 @@ unsigned int *Client::sha256(string msg) {
     unsigned int alpha_0 = 0;
     unsigned int alpha_1 = 0;
     for (i = 16; i < 64; i++) {
+        // Rigth rotate ^ Right rotate ^ Right shift
         alpha_0 = ((*current_w[1] >> 7) | (*current_w[1] << 25)) ^ ((*current_w[1] >> 18) | (*current_w[1] << 14)) ^ (*current_w[1] >> 3);
         alpha_1 = ((*current_w[3] >> 17) | (*current_w[3] << 15)) ^ ((*current_w[3] >> 19) | (*current_w[3] << 13)) ^ (*current_w[3] >> 10);
         msg_schedule[i] = *current_w[0]++ + alpha_0 + *current_w[2]++ + alpha_1;
@@ -150,6 +150,7 @@ unsigned int *Client::sha256(string msg) {
 
 /*
     Sets up the structs needed for the sockets.
+    Source: Beej’s Guide to Network Programming.
 */
 void Client::get_addrinfos() {
     int status;
@@ -166,6 +167,10 @@ void Client::get_addrinfos() {
     }
 }
 
+/*
+    Creates the desired sockets and gets their file descriptors.
+    Source: Beej’s Guide to Network Programming.
+*/
 void Client::create_sockets() {
     // Loop through the linked list to get a valid socket to receive incoming UDP connections
     for (p = servinfo; p != NULL; p = p->ai_next) {
@@ -188,35 +193,79 @@ void Client::create_sockets() {
         exit(2);
     }
 
-    struct sockaddr_in *address = (struct sockaddr_in *)p->ai_addr;
-    my_tcp_port = htons(address->sin_port);
+    struct sockaddr_in *my_address;
+    socklen_t my_address_len = sizeof(my_address);
+    if (getsockname(socketfd, (struct sockaddr *)my_address, &my_address_len) == -1) {
+        perror("getsockname");
+        exit(2);
+    }
+    my_tcp_port = htons(my_address->sin_port);
 }
 
-bool Client::authenticate() {
+bool Client::authenticate(bool use_sha256) {
     string username, password;
     get_user_credentials(&username, &password);
     id = username;
-    string enc_username = basic_encrypt(username);
-    string enc_password = basic_encrypt(password);
-    // Build out buffer
-    int buf_len = enc_username.length() + enc_password.length() + 2; // Data size + one byte of operation code + one byte of separation
-    unsigned char buffer[buf_len];
-    int i = 1;
-    int stop = enc_username.length() + 1;
-    buffer[0] = 0; // Authentication request
-    for (; i < stop; i++) {
-        buffer[i] = enc_username[i - 1]; // Username
+    if (!use_sha256) {
+        string enc_username = basic_encrypt(username);
+        string enc_password = basic_encrypt(password);
+        // Build out buffer
+        int buf_len = enc_username.length() + enc_password.length() + 2; // Data size + one byte of request code + one byte of separation
+        unsigned char buffer[buf_len];
+        int i = 1;
+        int stop = enc_username.length() + 1;
+        buffer[0] = 0; // Authentication request
+        for (; i < stop; i++) {
+            buffer[i] = enc_username[i - 1]; // Username
+        }
+        buffer[i++] = 0; // Separation
+        stop = buf_len;
+        int j = 0;
+        for (; i < stop; i++, j++) {
+            buffer[i] = enc_password[j]; // Encrypted password
+        }
+        // Beej’s Guide to Network Programming
+        if (send(socketfd, buffer, buf_len, 0) == -1) {
+            perror("send");
+            exit(4);
+        }
     }
-    buffer[i++] = 0; // Separation
-    stop = buf_len;
-    int j = 0;
-    for (; i < stop; i++, j++) {
-        buffer[i] = enc_password[j]; // Encrypted password
-    }
-    
-    if (send(socketfd, buffer, buf_len, 0) == -1) {
-        perror("send");
-        exit(4);
+    else { // Authentication using sha256
+        unsigned int *enc_username = sha256(username);
+        unsigned int *enc_password;
+        if (password.length() == 0)
+            // All zeros for guest authentication (assuming no possible password can produce this hash)
+            enc_password = new unsigned int[8] { 0, 0, 0, 0, 0, 0, 0, 0 };
+        else
+            enc_password = sha256(password);
+        // Build out buffer
+        int buf_len = 2 * 8 * sizeof (unsigned int) + 1; // 8 unsigned int for username, 8 unsigned int for password, and one byte for request code
+        unsigned char out_buffer[buf_len];
+        out_buffer[0] = 0; // Authentication request
+        // Put encrypted username into out_buffer
+        for (int i = 0, j = 1; i < 8; i++) {
+            unsigned char *ptr = (unsigned char *)&enc_username[i] + 3;
+            out_buffer[j++] = *ptr--;
+            out_buffer[j++] = *ptr--;
+            out_buffer[j++] = *ptr--;
+            out_buffer[j++] = *ptr--;
+        }
+        // Put encrypted password into out_buffer
+        for (int i = 0, j = 33; i < 8; i++) {
+            unsigned char *ptr = (unsigned char *)&enc_password[i] + 3;
+            out_buffer[j++] = *ptr--;
+            out_buffer[j++] = *ptr--;
+            out_buffer[j++] = *ptr--;
+            out_buffer[j++] = *ptr--;
+        }
+        // Send to main server (Beej’s Guide to Network Programming)
+        if (send(socketfd, out_buffer, buf_len, 0) == -1) {
+            perror("send");
+            exit(4);
+        }
+        // Free memory
+        delete [] enc_username;
+        delete [] enc_password;
     }
     printf("%s sent an authentication request to the main server.\n", id.c_str());
 
@@ -266,6 +315,7 @@ void Client::send_room_data(string room, unsigned char request_code) {
     // Fill the buffer
     for (int i = 1; i < buf_len; i++)
         buffer[i] = room[i - 1];
+    // Beej’s Guide to Network Programming
     if (send(socketfd, buffer, buf_len, 0) == -1) {
         perror("send");
         exit(4);
@@ -273,6 +323,7 @@ void Client::send_room_data(string room, unsigned char request_code) {
 }
 
 void Client::get_response_code(unsigned char *in_buffer, int *numbytes) {
+    // Beej’s Guide to Network Programming
     if (((*numbytes) = recv(socketfd, in_buffer, MAXBUFLEN - 1, 0)) == -1) {
         perror("recv");
         exit(3);
@@ -300,12 +351,35 @@ void Client::print_response_msg(unsigned char response_code, bool is_query_reque
     }
 }
 
+/*
+    Converts an array of unsigned chars to their hexadecimal string representation.
+*/
+string Client::uchar_tohex(unsigned char *chars, int length) {
+    char const hex_characters[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
+    char c_str[length * 2];
+    for (int i = 0, j = 0; i < length; i++, j += 2) {
+        c_str[j] = hex_characters[(chars[i] & 0xF0) >> 4];
+        c_str[j + 1] = hex_characters[chars[i] & 0x0F];
+    }
+    string str(c_str);
+    return str;
+}
 
 int main(int argc, char *argv[]) {
+    bool use_sha256;
+    if (argc > 1) {
+        char *arg = argv[1];
+        if (arg[0] == '-' && arg[1] == 'e')
+            use_sha256 = true;
+        else
+            use_sha256 = false;
+    }
+    else
+        use_sha256 = false;
     Client client;
-    bool authenticated = client.authenticate();
+    bool authenticated = client.authenticate(use_sha256);
     while (!authenticated){
-        authenticated = client.authenticate();
+        authenticated = client.authenticate(use_sha256);
     }
     string room_code;
     string request_type;

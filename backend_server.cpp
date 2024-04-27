@@ -75,6 +75,7 @@ void BackendServer::load_data() {
 
 /*
     Sets up the structs needed for the sockets.
+    Source: Beej’s Guide to Network Programming.
 */
 void BackendServer::get_addrinfos() {
     int status;
@@ -100,6 +101,9 @@ void BackendServer::get_addrinfos() {
     }
 }
 
+/*
+    Source: Beej’s Guide to Network Programming.
+*/
 void BackendServer::create_sockets() {
     // Loop through the linked list to get a valid socket to receive incoming UDP connections
     for (p = servinfo; p != NULL; p = p->ai_next) {
@@ -144,6 +148,7 @@ void BackendServer::send_initial_data() {
     }
     int bytes_to_send = sizeof(short) * room_status.size() * 2;
     int numbytes;
+    // Beej’s Guide to Network Programming
     if ((numbytes = sendto(socketfd, data, bytes_to_send, 0, pM->ai_addr, pM->ai_addrlen)) == -1) {
         perror("send");
         exit(3);
@@ -176,7 +181,6 @@ void BackendServer::query(unsigned char *buffer, unsigned char *response_code) {
     unsigned short room_number;
     printf("The Server %s received an availability request from the main server.\n", SERVER_ID);
     room_number = (((unsigned short)buffer[1]) << 8) | buffer[2];
-    cout << "Looking for room " << SERVER_ID << room_number << endl;
     map<unsigned short, unsigned short>::iterator it = room_status.find(room_number);
     if (it == room_status.end()) // Room not found
     {
@@ -219,6 +223,7 @@ void BackendServer::reservation(unsigned char *buffer, unsigned char *response_c
 
 void BackendServer::send_response(unsigned char response_code) {
     int sent_bytes;
+    // Beej’s Guide to Network Programming
     if ((sent_bytes = sendto(socketfd, &response_code, 1, 0, pM->ai_addr, pM->ai_addrlen)) == -1) {
         perror("send");
         exit(4);
@@ -232,7 +237,7 @@ void BackendServer::receive_udp(unsigned char *buf, int *numbytes) {
     struct sockaddr from_addr;
     memset(&from_addr, 0, sizeof from_addr);
     socklen_t from_len = sizeof from_addr;
-    // Receive data from the given server
+    // Receive data from the given server (Beej’s Guide to Network Programming)
     if (((*numbytes) = recvfrom(socketfd, buf, MAXBUFLEN - 1, 0, &from_addr, &from_len)) == -1) {
         perror("receive_from");
         exit(3);

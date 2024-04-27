@@ -36,6 +36,8 @@ class ServerM
         void fill_room_data(char, unsigned char *, int);
         void listen_for_connections();
         void lookup_credentials(string, string, unsigned char *);
+        void lookup_sha256_credentials(unsigned char *, unsigned char *, unsigned char *);
+        string uchar_tohex(unsigned char *, int);
 
     public:
         ServerM();
@@ -46,7 +48,7 @@ class ServerM
         int accept_connection(); 
         void close_parent_socket();
         void close_child_socket(int);
-        bool authenticate(unsigned char *, int, unsigned char *, string *);
+        bool authenticate(unsigned char *, int, unsigned char *, string *, bool);
         void send_response_code(int, unsigned char);
         void process_query_request(unsigned char *, int, unsigned char *, string);
         void process_reservation_request(unsigned char *, int, unsigned char *, string, bool);
